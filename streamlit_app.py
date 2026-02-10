@@ -3,54 +3,82 @@ from pykrx import stock
 import pandas as pd
 from datetime import datetime, timedelta
 
-# 모바일 최적화 설정
-st.set_page_config(page_title="에이아이비서", layout="wide")
+# 1. 화면 설정 (앱 이름과 아이콘)
+st.set_page_config(page_title="나의 주식 비서", layout="wide")
 
-st.markdown("<h2 style='text-align: center;'>📈 내 전용 주식 비서</h2>", unsafe_allow_html=True)
+# 2. 사진처럼 예쁘게 만들기 위한 '색깔 옷(CSS)' 입히기
+st.markdown("""
+    <style>
+    .stock-card {
+        background-color: #ffffff;
+        border-radius: 15px;
+        padding: 20px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+        border-left: 10px solid #1E88E5;
+    }
+    .stock-name { font-size: 24px; font-weight: bold; color: #333; }
+    .price-up { color: #e53935; font-size: 20px; font-weight: bold; }
+    .price-down { color: #1E88E5; font-size: 20px; font-weight: bold; }
+    .info-label { color: #666; font-size: 14px; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# 설정값 (어르신 원칙 45%)
-drop_val = st.sidebar.number_input("감지 비율(%)", value=45.0)
-stock_input = st.sidebar.text_area("종목 입력 (쉼표 구분)", "보성파워텍, 한화솔루션")
+st.title("📱 나의 주식 시세 정보")
 
-if st.sidebar.button('🔄 데이터 새로고침'):
-    st.rerun()
+# 3. 왼쪽 설정 메뉴
+with st.sidebar:
+    st.header("⚙️ 설정")
+    drop_val = st.number_input("하락 감지(%)", value=45.0)
+    stocks_input = st.text_area("종목 입력", "보성파워텍, 한화솔루션, 삼성전자")
+    target_date = st.text_input("기준일 (돌파확인용)", "20240101")
+    st.button("🔄 시세 새로고침")
 
-# 계산 및 표 표시
-names = [s.strip() for s in stock_input.split(',')]
-results = []
+# 4. 데이터 계산 및 화면 출력
+names = [s.strip() for s in stocks_input.split(',')]
 today = datetime.now().strftime("%Y%m%d")
 
 for name in names:
     try:
         tickers = stock.get_market_ticker_list()
-        code = [t for t in tickers if stock.get_market_ticker_name(t) == name][0]
-        df = stock.get_market_ohlcv_by_date(today, today, code)
-        if df.empty: df = stock.get_market_ohlcv_by_date((datetime.now()-timedelta(days=7)).strftime("%Y%m%d"), today, code)
-        
+        ticker_dict = {stock.get_market_ticker_name(t): t for t in tickers}
+        code = ticker_dict.get(name)
+        if not code: continue
+
+        # 시세 정보 가져오기
+        df = stock.get_market_ohlcv_by_date((datetime.now()-timedelta(days=365)).strftime("%Y%m%d"), today, code)
         v = df.iloc[-1]
         curr, high, rate = int(v['종가']), int(v['고가']), v['등락률']
-        prev_close = curr / (1 + rate / 100)
-        high_r = (high - prev_close) / prev_close * 100
         
-        # 어르신 계산법: 고가 등락률 - 45%
-        pred_r = high_r - drop_val
-        pred_p = round(prev_close * (1 + pred_r / 100))
-        
-        # 분매 2~5 계산
-        m2 = round(prev_close * (1 + (pred_r - 1) / 100))
-        m3 = round(prev_close * (1 + (pred_r - 2) / 100))
-        m4 = round(prev_close * (1 + (pred_r - 3) / 100))
-        m5 = round(prev_close * (1 + (pred_r - 4) / 100))
+        # 돌파 확인 로직
+        break_date = "없음"
+        if target_date in df.index.strftime('%Y%m%d'):
+            base_p = df.loc[target_date, '종가']
+            after_df = df.loc[target_date:]
+            broken = after_df[after_df['시가'] < base_p]
+            if not broken.empty: break_date = broken.index[0].strftime('%Y-%m-%d')
 
-        results.append({
-            "종목명": name, "현재가": f"{curr:,}", "등락률": f"{rate:+.2f}%", 
-            "고가(%)": f"{high_r:+.2f}%", "예측가(분매1)": f"{pred_p:,}",
-            "분매2": f"{m2:,}", "분매3": f"{m3:,}", "분매4": f"{m4:,}", "분매5": f"{m5:,}"
-        })
-    except: continue
-
-# 표 그리기 (어르신이 주신 이미지와 똑같은 구성)
-if results:
-    st.table(pd.DataFrame(results))
-else:
-    st.write("종목명을 확인해주세요.")
+        # 5. 사진처럼 '카드 모양'으로 그리기
+        color_class = "price-up" if rate > 0 else "price-down"
+        st.markdown(f"""
+            <div class="stock-card">
+                <div class="stock-name">{name} <span class="{color_class}">{rate:+.2f}%</span></div>
+                <hr>
+                <div style="display: flex; justify-content: space-between;">
+                    <div>
+                        <p class="info-label">현재가</p>
+                        <p style="font-size: 22px; font-weight: bold;">{curr:,}원</p>
+                    </div>
+                    <div>
+                        <p class="info-label">고가대비(원칙)</p>
+                        <p style="color: #f4511e; font-weight: bold;">{high:+,}원</p>
+                    </div>
+                    <div>
+                        <p class="info-label">{target_date} 돌파일</p>
+                        <p style="color: #43A047; font-weight: bold;">{break_date}</p>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    except:
+        continue
