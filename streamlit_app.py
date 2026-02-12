@@ -1,69 +1,51 @@
 import streamlit as st
-from pykrx import stock
-import pandas as pd
-from datetime import datetime, timedelta
+import requests
+from bs4 import BeautifulSoup
 
-# 1. 앱 기본 설정
-st.set_page_config(page_title="나의 종목 감시자", layout="wide")
+# 1. 앱 기본 설정 (폰에서 보기 좋게 넓게 설정)
+st.set_page_config(page_title="29% 포착기", layout="wide")
+st.title("🔥 시가 29% 돌파 감시기")
 
-# 2. 디자인 설정
-st.markdown("""
-    <style>
-    .stock-card {
-        background-color: #ffffff;
-        border-radius: 12px;
-        padding: 15px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        margin-bottom: 15px;
-        border-left: 8px solid #FF5722;
-    }
-    .status-broken { color: #d32f2f; font-weight: bold; }
-    .status-ok { color: #388e3c; font-weight: bold; }
-    </style>
-    """, unsafe_allow_html=True)
+# 2. 감시할 종목 리스트 (필요시 코드만 추가하면 됩니다)
+target_stocks = {
+    "한미반도체": "042700",
+    "디아이": "003160",
+    "유니테스트": "086390",
+    "에이프릴바이오": "397030",
+    "전진건설로봇": "079900",
+    "태광산업": "003240",
+    "현대지에프홀딩스": "052390"
+}
 
-st.title("🎯 종목별 기준일 감시 비서")
-
-# 3. 사이드바 설정
-with st.sidebar:
-    st.header("📋 종목 및 날짜 입력")
-    st.info("형식: 종목명:240101\n(여러 개는 쉼표로 구분)")
-    user_input = st.text_area("입력란", "보성파워텍:240201, 한화솔루션:240115")
-    st.button("🔄 분석 실행")
-
-# 4. 분석 및 출력 로직
-def run_analysis():
-    today = datetime.now().strftime("%Y%m%d")
-    start_date = (datetime.now() - timedelta(days=365)).strftime("%Y%m%d")
-    items = [item.strip() for item in user_input.split(',')]
-
-    for item in items:
-        if ':' not in item: continue
+# 3. 실행 버튼
+if st.button('🚀 지금 바로 기세 확인 (새로고침)'):
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    
+    for name, code in target_stocks.items():
         try:
-            name, t_date = item.split(':')
-            name, t_date = name.strip(), t_date.strip()
-            full_date = "20" + t_date if len(t_date) == 6 else t_date
-
-            tickers = stock.get_market_ticker_list()
-            ticker_dict = {stock.get_market_ticker_name(t): t for t in tickers}
-            code = ticker_dict.get(name)
+            # 네이버 증권 데이터 긁어오기
+            url = f"https://finance.naver.com/item/main.naver?code={code}"
+            res = requests.get(url, headers=headers)
+            soup = BeautifulSoup(res.text, 'html.parser')
             
-            if code:
-                df = stock.get_market_ohlcv_by_date(start_date, today, code)
-                if full_date in df.index.strftime('%Y%m%d'):
-                    t_info = df.loc[full_date]
-                    base_open = int(t_info['시가'])
-                    base_rate = t_info['등락률']
-                    
-                    after_df = df.loc[full_date:]
-                    broken_days = after_df.iloc[1:][after_df.iloc[1:]['시가'] < base_open]
-                    
-                    if not broken_days.empty:
-                        b_date = broken_days.index[0].strftime('%y-%m-%d')
-                        st.markdown(f'<div class="stock-card"><b>{name}</b> <span class="status-broken">🚨 {b_date} 시가 깨짐!</span><br><small>기준일 시가: {base_open:,}원</small></div>', unsafe_allow_html=True)
-                    else:
-                        st.markdown(f'<div class="stock-card"><b>{name}</b> <span class="status-ok">✅ 유지 중</span><br><small>기준일 시가: {base_open:,}원</small></div>', unsafe_allow_html=True)
-        except:
-            continue
+            # 전일가와 시가 추출
+            rate_table = soup.find('div', {'class': 'rate_info'}).find('table')
+            prev_close = int(rate_table.find('td', {'class': 'first'}).find('span', {'class': 'blind'}).text.replace(',', ''))
+            opening_price = int(rate_table.findAll('td')[1].find('span', {'class': 'blind'}).text.replace(',', ''))
+            
+            # 등락률 계산
+            gap = ((opening_price - prev_close) / prev_close) * 100
+            
+            # 4. 결과 출력 (29% 기준)
+            if gap >= 29.0:
+                st.error(f"🚨 {name}: 시가 {opening_price:,}원 ({gap:.2f}%) - 점상급!")
+            elif gap <= -29.0:
+                st.warning(f"❄️ {name}: 시가 {opening_price:,}원 ({gap:.2f}%) - 점하급!")
+            else:
+                st.success(f"✅ {name}: 시가 {opening_price:,}원 ({gap:.2f}%)")
+                
+        except Exception as e:
+            st.write(f"⚠️ {name}({code}) 데이터를 읽지 못했습니다.")
 
-run_analysis()
+st.divider()
+st.caption("이 앱은 오전 8:40 ~ 9:00 사이 예상체결가 확인용으로 가장 정확합니다.")
